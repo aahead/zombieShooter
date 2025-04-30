@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Top-Down Zombie Shooter - Health, Reload & Speed Boost</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { background: #444; display: block; }
+    #game-over {
+      position: absolute; top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      background: rgba(0,0,0,0.8);
+      color: white;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: Arial, sans-serif;
+      font-size: 48px;
+      display: none;
+    }
+    #restart-btn {
+      margin-top: 20px; padding: 10px 20px;
+      font-size: 24px; cursor: pointer;
+      border: none; border-radius: 10px;
+      background: #00aaff; color: white;
+    }
+    #restart-btn:hover { background: #0088cc; }
+    #damage-overlay {
+      position: fixed; top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      background: rgba(255,0,0,0.4);
+      pointer-events: none; opacity: 0;
+      transition: opacity 0.4s ease-out;
+      z-index: 9999;
+    }
+    #wave-countdown {
+      position: absolute; top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      background: rgba(0,0,0,0.75);
+      display: none;
+      align-items: center; justify-content: center;
+      flex-direction: column;
+      color: white;
+      font-family: Arial, sans-serif;
+      font-size: 48px;
+      z-index: 10000;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="game-over">
+    <div>YOU DIED</div>
+    <button id="restart-btn">Play Again</button>
+  </div>
+  <div id="damage-overlay"></div>
+  <div id="wave-countdown"><div id="wave-text">Wave 1 in 10s</div></div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx    = canvas.getContext('2d');
+canvas.width  = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const gameOverScreen = document.getElementById('game-over');
+const restartBtn     = document.getElementById('restart-btn');
+const damageOverlay  = document.getElementById('damage-overlay');
+const waveCountdown  = document.getElementById('wave-countdown');
+const waveText       = document.getElementById('wave-text');
+
+const map = { width: 3000, height: 2000 };
+let camX=0, camY=0;
+
+// Player & movement
+let player = { x: map.width/2, y: map.height/2, size:40, speed:4 };
+let keys = {};
+
+// Entities
+let bullets = [], zombies = [], grenades = [], shotguns = [], speedBoosts = [];
+
+// Stats
+let health=100, ammo=20, isReloading=false, reloadTimer=0;
+let hasShotgun=false, shotgunShotsLeft=0;
+let hasSpeedBoost=false, speedBoostTimer=0;
+
+// Wave
+let wave=1, zombiesToSpawn=20, zombiesSpawned=0, inRestPeriod=false, restTimer=0;
+
+// Timing
+let lastFrameTime = performance.now();
+let muzzleFlash = { active:false, timer:0 };
+
+// Constants
+const RELOAD_DURATION = 3;      // seconds
+const SPEED_BOOST_DURATION = 5; // seconds
+const SPEED_BOOST_MULTIPLIER = 3;
+const MAX_SHOTGUNS = 2;
+const MAX_SPEED_BOOSTS = 1;
+const SHOTGUN_SPAWN_INTERVAL = 20; // seconds
+let shotgunSpawnTimer = 0;
+
+// Mouse
+let mouseX=0, mouseY=0;
+window.addEventListener('mousemove', e => { mouseX=e.clientX; mouseY=e.clientY; });
+window.addEventListener('keydown', e => {
+  keys[e.key]=true;
+  if (e.key==='r' && ammo>0 && !isReloading && health>0) startReloading();
+});
+window.addEventListener('keyup', e => keys[e.key]=false);
+window.addEventListener('click', shoot);
+restartBtn.addEventListener('click', resetGame);
+
+// Images
+const muzzleFlashImage = new Image(); muzzleFlashImage.src='muzzleflash.png';
+const zombieImage      = new Image(); zombieImage.src='zombie.png';
+const mapImage         = new Image(); mapImage.src='map.png';
+const characterImage   = new Image(); characterImage.src='download.png';
+const reloading1       = new Image(); reloading1.src='reloading.png';
+const reloading2       = new Image(); reloading2.src='reloading2.png';
+const reloading3       = new Image(); reloading3.src='reloading3.png';
+const shotgunImage     = new Image(); shotgunImage.src='pixelShotgun.png';
+const bulletImage      = new Image(); bulletImage.src='bullet.png';
+const shotgunShell     = new Image(); shotgunShell.src='shell.png';
+const speedBoostImage  = new Image(); speedBoostImage.src='speed_boost.png';
+
+const reloadFrames = [
+  characterImage,
+  reloading1,
+  reloading2,
+  reloading3,
+  reloading2,
+  reloading1,
+  characterImage
+];
+
+// Spawn functions
+function spawnShotgun(){
+  if(shotguns.length<MAX_SHOTGUNS){
+    shotguns.push({ x:Math.random()*map.width, y:Math.random()*map.height, size:20 });
+  }
+}
+function spawnSpeedBoost(){
+  if(speedBoosts.length<MAX_SPEED_BOOSTS){
+    speedBoosts.push({ x:Math.random()*map.width, y:Math.random()*map.height, size:20 });
+  }
+}
+
+// Reload/shoot
+function startReloading(){
+  isReloading=true; reloadTimer=0; ammo=0;
+}
+function shoot(e){
+  if(isReloading||ammo<=0||health<=0) return;
+  const wx=e.clientX+camX, wy=e.clientY+camY;
+  const angle=Math.atan2(wy-player.y, wx-player.x);
+  if(hasShotgun){
+    for(let i=0;i<7;i++){
+      const spr=(Math.random()-0.5)*0.3;
+      bullets.push({ x:player.x, y:player.y, angle:angle+spr, speed:14 });
+    }
+    shotgunShotsLeft--;
+    if(shotgunShotsLeft<=0) hasShotgun=false;
+  } else {
+    bullets.push({ x:player.x, y:player.y, angle, speed:8 });
+  }
+  ammo--;
+  muzzleFlash.active=true;
+  muzzleFlash.timer=0.1;
+  if(ammo<=0) startReloading();
+}
+
+// Move & pickups
+function movePlayer(dt){
+  const spd=player.speed*(hasSpeedBoost?SPEED_BOOST_MULTIPLIER:1);
+  if(keys['w']) player.y-=spd;
+  if(keys['s']) player.y+=spd;
+  if(keys['a']) player.x-=spd;
+  if(keys['d']) player.x+=spd;
+  // shotgun pickup
+  for(let i=shotguns.length-1;i>=0;i--){
+    const s=shotguns[i];
+    if(Math.hypot(player.x-s.x, player.y-s.y)<player.size+s.size){
+      shotguns.splice(i,1);
+      hasShotgun=true;
+      shotgunShotsLeft=10;
+      ammo=10;
+    }
+  }
+  // speed boost pickup
+  for(let i=speedBoosts.length-1;i>=0;i--){
+    const b=speedBoosts[i];
+    if(Math.hypot(player.x-b.x, player.y-b.y)<player.size+b.size){
+      speedBoosts.splice(i,1);
+      hasSpeedBoost=true;
+      speedBoostTimer=SPEED_BOOST_DURATION;
+    }
+  }
+  player.x=Math.max(player.size, Math.min(map.width-player.size, player.x));
+  player.y=Math.max(player.size, Math.min(map.height-player.size, player.y));
+}
+
+// Placeholder your existing logic here:
+function moveBullets(){ /* ... */ }
+function moveZombies(dt){ /* ... */ }
+function moveGrenades(dt){ /* ... */ }
+function checkCollisions(){ /* ... */ }
+function updateMuzzleFlash(dt){
+  if(muzzleFlash.active){
+    muzzleFlash.timer-=dt;
+    if(muzzleFlash.timer<=0) muzzleFlash.active=false;
+  }
+}
+function drawMuzzleFlash(){ /* ... */ }
+function drawMiniMap(){ /* ... */ }
+function drawBullets(){ /* ... */ }
+function drawZombies(){ /* ... */ }
+
+// Draw functions
+function drawMap(){
+  ctx.drawImage(mapImage,0,0,map.width,map.height);
+  shotguns.forEach(s=>{
+    ctx.drawImage(shotgunImage, s.x-s.size, s.y-s.size, s.size*2, s.size*2);
+  });
+  speedBoosts.forEach(b=>{
+    ctx.drawImage(speedBoostImage, b.x-b.size, b.y-b.size, b.size*2, b.size*2);
+  });
+}
+function drawPlayer(){
+  ctx.save();
+  ctx.translate(player.x,player.y);
+  const ang=Math.atan2((mouseY+camY)-player.y, (mouseX+camX)-player.x);
+  ctx.rotate(ang+Math.PI/2);
+  if(isReloading){
+    const p=Math.min(reloadTimer/RELOAD_DURATION,1);
+    const raw=p*(reloadFrames.length-1);
+    const i0=Math.floor(raw), i1=Math.min(i0+1, reloadFrames.length-1);
+    const t=raw-i0;
+    ctx.save();
+    ctx.globalAlpha=1-t;
+    ctx.drawImage(reloadFrames[i0], -player.size, -player.size, player.size*2, player.size*2);
+    ctx.globalAlpha=t;
+    ctx.drawImage(reloadFrames[i1], -player.size, -player.size, player.size*2, player.size*2);
+    ctx.restore();
+  } else {
+    ctx.drawImage(characterImage, -player.size, -player.size, player.size*2, player.size*2);
+  }
+  ctx.restore();
+}
+function drawUI(){
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.fillStyle='rgba(0,0,0,0.6)';
+  ctx.fillRect(10,10,300,140);
+  const grad=ctx.createLinearGradient(20,0,220,0);
+  grad.addColorStop(0,'lime');
+  grad.addColorStop(0.5,'yellow');
+  grad.addColorStop(1,'red');
+  ctx.fillStyle='grey'; ctx.fillRect(20,30,200,20);
+  ctx.fillStyle=grad; ctx.fillRect(20,30,(health/100)*200,20);
+  ctx.strokeStyle='white'; ctx.strokeRect(20,30,200,20);
+  ctx.font='16px Arial'; ctx.fillStyle='white';
+  ctx.shadowColor='black'; ctx.shadowBlur=4;
+  ctx.fillText(`Health: ${health}`,230,45);
+  ctx.shadowBlur=0;
+  ctx.fillText(`Ammo: ${ammo}`,20,70);
+  if(isReloading){
+    ctx.fillStyle='yellow'; ctx.fillText('Reloading...',100,70);
+  }
+  ctx.fillStyle='white';
+  ctx.fillText(`Zombies: ${zombies.length+(zombiesToSpawn-zombiesSpawned)}`,20,100);
+  if(hasSpeedBoost){
+    ctx.fillStyle='cyan';
+    ctx.fillText(`Speed: ${speedBoostTimer.toFixed(1)}s`,20,130);
+  }
+}
+
+// Reset & loop
+function resetGame(){
+  player={x:map.width/2,y:map.height/2,size:40,speed:4};
+  health=100; ammo=20; isReloading=false; reloadTimer=0;
+  hasShotgun=false; shotgunShotsLeft=0;
+  hasSpeedBoost=false; speedBoostTimer=0;
+  bullets=[]; zombies=[]; grenades=[];
+  shotguns=[]; speedBoosts=[];
+  wave=1; zombiesToSpawn=20; zombiesSpawned=0; inRestPeriod=false; restTimer=0;
+  lastFrameTime=performance.now();
+  camX=0; camY=0;
+  spawnShotgun(); spawnShotgun();
+  spawnSpeedBoost();
+  gameOverScreen.style.display='none';
+  requestAnimationFrame(gameLoop);
+}
+
+function gameLoop(now){
+  const dt=(now-lastFrameTime)/1000;
+  lastFrameTime=now;
+  if(health<=0){
+    gameOverScreen.style.display='flex';
+    return;
+  }
+  movePlayer(dt);
+  moveBullets();
+  moveZombies(dt);
+  moveGrenades(dt);
+  checkCollisions();
+  if(isReloading){
+    reloadTimer+=dt;
+    if(reloadTimer>=RELOAD_DURATION){
+      isReloading=false; reloadTimer=0; ammo=20;
+    }
+  }
+  if(hasSpeedBoost){
+    speedBoostTimer-=dt;
+    if(speedBoostTimer<=0){
+      hasSpeedBoost=false; speedBoostTimer=0;
+    }
+  }
+  // ensure at least one boost on floor
+  if(speedBoosts.length<MAX_SPEED_BOOSTS) spawnSpeedBoost();
+
+  // camera
+  camX=Math.max(0,Math.min(map.width-canvas.width,player.x-canvas.width/2));
+  camY=Math.max(0,Math.min(map.height-canvas.height,player.y-canvas.height/2));
+  ctx.setTransform(1,0,0,1,-camX,-camY);
+
+  ctx.clearRect(camX,camY,canvas.width,canvas.height);
+  drawMap();
+  drawPlayer();
+  drawBullets();
+  drawZombies();
+  drawGrenades(dt);
+  updateMuzzleFlash(dt);
+  drawMuzzleFlash();
+
+  // (your existing wave & rest code here)
+
+  drawUI();
+  requestAnimationFrame(gameLoop);
+}
+
+resetGame();
+</script>
+</body>
+</html>

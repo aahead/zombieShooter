@@ -85,8 +85,10 @@
 
 <script>
 
+
 const waveCountdown = document.getElementById('wave-countdown');
 const waveText      = document.getElementById('wave-text');
+
 
 
 let zombiesToSpawn = 20;
@@ -95,16 +97,15 @@ let inRestPeriod = false;
 let restTimer = 0;
 
 
-
 // Grenade properties
 let grenades = [];
 
 // Add key event listener for throwing the grenade
-window.addEventListener('keydown', e => {
-  if (e.key === 'g' && !isReloading && ammo > 0 && !isDead) {
-    throwGrenade();
-  }
-});
+//window.addEventListener('keydown', e => {
+  //if (e.key === 'g' && !isReloading && ammo > 0 && !isDead) {
+    //throwGrenade();
+  //}
+//});
 
 function throwGrenade() {
   if (grenadeAmmo > 0) {
@@ -195,7 +196,6 @@ function drawGrenades(ctx) {
     ctx.closePath();
   });
 }
-
 
 
 
@@ -304,6 +304,9 @@ shotgunShell.src = 'shell.png';
 
 
 
+
+
+
 // put them in order: normal → reload1 → reload2 → reload1 → normal
 const reloadFrames = [
   characterImage,
@@ -334,9 +337,14 @@ let player = {
 let keys = {};
 let bullets = [];
 let zombies = [];
+let totalZombiesSpawned = 0;
+const medkits = [];
 
 
 let shotguns = []; // Store multiple shotguns
+
+
+
 const MAX_SHOTGUNS = 2;
 
 function spawnShotgun() {
@@ -349,6 +357,9 @@ function spawnShotgun() {
   }
 }
 
+
+const medkitImage = new Image();
+medkitImage.src = 'medkit.png'; // Replace with your actual file path
 
 let hasShotgun = false;
 let shotgunShotsLeft = 0;
@@ -448,6 +459,24 @@ function shoot(e) {
 let shotgunSpawnTimer = 0;
 const SHOTGUN_SPAWN_INTERVAL = 20; // in seconds
 
+const medkitZombieImage = new Image();
+medkitZombieImage.src = 'medzombie.png'; // ✅ Replace with your actual medkit zombie image path
+
+
+function drawMedkits() {
+  for (let medkit of medkits) {
+    const medkitSize = 50; // ✅ Increased size
+    ctx.drawImage(
+      medkitImage,
+      medkit.x - medkitSize / 2,
+      medkit.y - medkitSize / 2,
+      medkitSize,
+      medkitSize
+    );
+  }
+}
+
+
 
 function drawMuzzleFlash() {
   if (muzzleFlash.active) {
@@ -513,14 +542,22 @@ function spawnZombie() {
   else if (edge === 2) { x = 0; y = Math.random() * map.height; }
   else { x = map.width; y = Math.random() * map.height; }
 
-  zombies.push({ 
-    x, 
-    y, 
-    size: 20, 
-    speed: 1.5 + wave * 0.2,
-    lastHitTime: 0 
-  });
+  totalZombiesSpawned++;
+
+  const isMedkitZombie = totalZombiesSpawned % 15 === 0;
+
+  zombies.push({
+  x,
+  y,
+  size: 20,
+  speed: 1.5 + wave * 0.5,
+  lastHitTime: 0,
+  isMedkitZombie: isMedkitZombie,
+  health: isMedkitZombie ? 3 : 1  // ✅ 3 hits for medkit, 1 for normal
+});
+
 }
+
 
 function movePlayer() {
   if (keys['w']) {
@@ -555,6 +592,18 @@ for (let i = shotguns.length - 1; i >= 0; i--) {
   }
 
 }
+// Medkit pickup
+for (let i = medkits.length - 1; i >= 0; i--) {
+  const medkit = medkits[i];
+  const dx = player.x - medkit.x;
+  const dy = player.y - medkit.y;
+  const distance = Math.hypot(dx, dy);
+
+  if (distance < player.size + medkit.size) {
+    health = Math.min(health + 10, 100);
+    medkits.splice(i, 1);
+  }
+}
 
 
 
@@ -575,47 +624,64 @@ function moveBullets() {
 function moveZombies(deltaTime, wave) {
   for (let zombie of zombies) {
     const angle = Math.atan2(player.y - zombie.y, player.x - zombie.x);
-    zombie.x += Math.cos(angle) * zombie.speed;
-    zombie.y += Math.sin(angle) * zombie.speed;
+    const distance = Math.hypot(player.x - zombie.x, player.y - zombie.y);
 
+// Only move if the zombie is not too close to the player
+if (distance > 25) {
+  zombie.x += Math.cos(angle) * zombie.speed;
+  zombie.y += Math.sin(angle) * zombie.speed;
+}
+
+  }
+
+  // --- NEW: Push zombies apart ---
+  for (let i = 0; i < zombies.length; i++) {
+    for (let j = i + 1; j < zombies.length; j++) {
+      const zombieA = zombies[i];
+      const zombieB = zombies[j];
+      const dx = zombieB.x - zombieA.x;
+      const dy = zombieB.y - zombieA.y;
+      const distance = Math.hypot(dx, dy);
+      const minDistance = zombieA.size + zombieB.size; // Required spacing
+
+      if (distance < minDistance && distance > 0) {
+        // Amount they are overlapping
+        const overlap = minDistance - distance;
+
+        // Push them apart equally
+        const pushX = (dx / distance) * overlap / 2;
+        const pushY = (dy / distance) * overlap / 2;
+
+        zombieA.x -= pushX;
+        zombieA.y -= pushY;
+        zombieB.x += pushX;
+        zombieB.y += pushY;
+      }
+    }
+  }
+
+  // --- (rest of your code for hurting the player) ---
+  for (let zombie of zombies) {
     const dx = zombie.x - player.x;
     const dy = zombie.y - player.y;
     if (Math.hypot(dx, dy) < 20) {
-      if (performance.now() - zombie.lastHitTime > 1000 && wave <= 3){
+      const now = performance.now();
+      if (now - zombie.lastHitTime > 1000) {
         showDamageOverlay();
-        health -= 5;
-        zombie.lastHitTime = performance.now();
+        if (wave <= 3) {
+          health -= 5;
+        } else if (wave <= 5) {
+          health -= 10;
+        } else {
+          health -= 20;
+        }
+        zombie.lastHitTime = now;
         if (health <= 0) {
           health = 0;
           isDead = true;
           gameOverScreen.style.display = 'flex';
         }
       }
-
-    if (performance.now() - zombie.lastHitTime > 1000 && wave <= 5){
-      showDamageOverlay();
-      health -= 10;
-      zombie.lastHitTime = performance.now();
-      if (health <= 0) {
-        health = 0;
-        isDead = true;
-        gameOverScreen.style.display = 'flex';
-      }
-    }
-
-
-  if (performance.now() - zombie.lastHitTime > 1000 && wave > 5){
-    showDamageOverlay();  
-    health -= 20;
-      zombie.lastHitTime = performance.now();
-      if (health <= 0) {
-        health = 0;
-        isDead = true;
-        gameOverScreen.style.display = 'flex';
-      }
-    }
-
-
     }
   }
 }
@@ -632,17 +698,39 @@ function checkCollisions() {
       const distance = Math.hypot(dx, dy);
 
       // Check if the bullet hits the zombie (considering their sizes)
-      if (distance < zombies[i].size * 2 + 5) {  // 5 is the bullet radius
-        zombiesToRemove.push(i);
-        bulletsToRemove.push(j);
-        break; // Stop checking other bullets for this zombie (one bullet can hit once)
-      }
+      if (distance < zombies[i].size * 2 + 5) {
+  zombies[i].health--;
+
+  // Only remove if health is 0
+  if (zombies[i].health <= 0) {
+    if (zombies[i].isMedkitZombie) {
+      medkits.push({
+        x: zombies[i].x,
+        y: zombies[i].y,
+        size: 20
+      });
+    }
+    zombiesToRemove.push(i);
+  }
+
+  bulletsToRemove.push(j);
+  break;
+}
+
     }
   }
 
   // Remove zombies that were hit
   for (let i = zombiesToRemove.length - 1; i >= 0; i--) {
-    zombies.splice(zombiesToRemove[i], 1);
+    const removedZombie = zombies.splice(zombiesToRemove[i], 1)[0];
+if (removedZombie.isMedkitZombie) {
+  medkits.push({
+    x: removedZombie.x,
+    y: removedZombie.y,
+    size: 20
+  });
+}
+
   }
 
   // Remove bullets that hit zombies
@@ -772,12 +860,14 @@ function drawZombies() {
     ctx.rotate(angle);
 
     ctx.drawImage(
-      zombieImage,
-      -zombie.size,
-      -zombie.size,
-      zombie.size * 4,
-      zombie.size * 4
-    );
+  zombie.isMedkitZombie ? medkitZombieImage : zombieImage,
+  -zombie.size,
+  -zombie.size,
+  zombie.size * 4,
+  zombie.size * 4
+);
+
+
 
     ctx.restore();
   }
@@ -881,22 +971,30 @@ function resetGame() {
   zombies = [];
   bullets = [];
   player = { x: map.width/2, y: map.height/2, size: 40, speed: 4, direction: 'down' };
+
   wave = 1;
   waveTimer = 0;
   spawnRate = 1000;
   reloadTimer = 0;
   gameOverScreen.style.display = 'none';
   lastFrameTime = performance.now();
-  requestAnimationFrame(gameLoop);
+
+  // ✅ Fix added here:
+  inRestPeriod = false;
+  restTimer = 0;
+  zombiesToSpawn = 20;
+  zombiesSpawned = 0;
+
+  // Reset weapons
+  hasShotgun = false;
   shotgunShotsLeft = 0;
-
-
   shotguns = [];
-spawnShotgun();
-spawnShotgun();
+  spawnShotgun();
+  spawnShotgun();
 
-
+  requestAnimationFrame(gameLoop);
 }
+
 
 function gameLoop(now) {
   if (isDead) return;
@@ -921,20 +1019,11 @@ function gameLoop(now) {
   drawPlayer();
   drawBullets();
   drawZombies();
+  drawMedkits();
   drawGrenades(ctx);
 
   updateMuzzleFlash(deltaTime);   // ✅ Always update muzzle flash
   drawMuzzleFlash();              // ✅ Always draw muzzle flash
-
-
-
-
-
-
-
-
-
-
 
 
   if (!inRestPeriod && zombiesSpawned < zombiesToSpawn) {

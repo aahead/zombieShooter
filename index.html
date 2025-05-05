@@ -627,7 +627,7 @@ function moveZombies(deltaTime, wave) {
     const distance = Math.hypot(player.x - zombie.x, player.y - zombie.y);
 
 // Only move if the zombie is not too close to the player
-if (distance > 25) {
+if (distance > 15) {
   zombie.x += Math.cos(angle) * zombie.speed;
   zombie.y += Math.sin(angle) * zombie.speed;
 }
@@ -649,8 +649,8 @@ if (distance > 25) {
         const overlap = minDistance - distance;
 
         // Push them apart equally
-        const pushX = (dx / distance) * overlap / 2;
-        const pushY = (dy / distance) * overlap / 2;
+        const pushX = (dx / distance) * overlap / 1.5;
+        const pushY = (dy / distance) * overlap / 1.5;
 
         zombieA.x -= pushX;
         zombieA.y -= pushY;
@@ -664,80 +664,65 @@ if (distance > 25) {
   for (let zombie of zombies) {
     const dx = zombie.x - player.x;
     const dy = zombie.y - player.y;
-    if (Math.hypot(dx, dy) < 20) {
-      const now = performance.now();
-      if (now - zombie.lastHitTime > 1000) {
-        showDamageOverlay();
-        if (wave <= 3) {
-          health -= 5;
-        } else if (wave <= 5) {
-          health -= 10;
-        } else {
-          health -= 20;
+    for (let zombie of zombies) {
+  const dx = zombie.x - player.x;
+  const dy = zombie.y - player.y;
+  const distance = Math.hypot(dx, dy);
+
+  if (distance < 20) {
+    if (!zombie.lastHitTime || zombie.lastHitTime <= 0) {
+      // ✅ Only damage if cooldown expired
+      showDamageOverlay();
+      if (wave <= 3) {
+        health -= 5;
+      } else if (wave <= 5) {
+        health -= 10;
+      } else {
+        health -= 20;
+      }
+      zombie.lastHitTime = 1.0; // reset cooldown
+      if (health <= 0) {
+        health = 0;
+        isDead = true;
+        gameOverScreen.style.display = 'flex';
+      }
+    }
+  }
+
+  // ✅ Always count down cooldown outside the hit check
+  if (zombie.lastHitTime > 0) {
+    zombie.lastHitTime -= deltaTime;
+  }
+}
+
+    }
+  }
+
+
+function checkCollisions() {
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const bullet = bullets[i];
+    for (let j = zombies.length - 1; j >= 0; j--) {
+      const zombie = zombies[j];
+      const dx = bullet.x - zombie.x;
+      const dy = bullet.y - zombie.y;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist < zombie.size * 2 + 5) { // Adjust radius for hitbox
+        zombie.health--;
+        if (zombie.health <= 0) {
+          const removed = zombies.splice(j, 1)[0];
+          if (removed.isMedkitZombie) {
+            medkits.push({ x: removed.x, y: removed.y, size: 20 });
+          }
         }
-        zombie.lastHitTime = now;
-        if (health <= 0) {
-          health = 0;
-          isDead = true;
-          gameOverScreen.style.display = 'flex';
-        }
+        bullets.splice(i, 1); // remove bullet once it hits
+        break; // no need to check other zombies for this bullet
       }
     }
   }
 }
 
-function checkCollisions() {
-  // Mark zombies that are hit
-  let zombiesToRemove = [];
-  let bulletsToRemove = [];
-
-  for (let i = 0; i < zombies.length; i++) {
-    for (let j = 0; j < bullets.length; j++) {
-      const dx = zombies[i].x - bullets[j].x;
-      const dy = zombies[i].y - bullets[j].y;
-      const distance = Math.hypot(dx, dy);
-
-      // Check if the bullet hits the zombie (considering their sizes)
-      if (distance < zombies[i].size * 2 + 5) {
-  zombies[i].health--;
-
-  // Only remove if health is 0
-  if (zombies[i].health <= 0) {
-    if (zombies[i].isMedkitZombie) {
-      medkits.push({
-        x: zombies[i].x,
-        y: zombies[i].y,
-        size: 20
-      });
-    }
-    zombiesToRemove.push(i);
-  }
-
-  bulletsToRemove.push(j);
-  break;
-}
-
-    }
-  }
-
-  // Remove zombies that were hit
-  for (let i = zombiesToRemove.length - 1; i >= 0; i--) {
-    const removedZombie = zombies.splice(zombiesToRemove[i], 1)[0];
-if (removedZombie.isMedkitZombie) {
-  medkits.push({
-    x: removedZombie.x,
-    y: removedZombie.y,
-    size: 20
-  });
-}
-
-  }
-
-  // Remove bullets that hit zombies
-  for (let i = bulletsToRemove.length - 1; i >= 0; i--) {
-    bullets.splice(bulletsToRemove[i], 1);
-  }
-}
 
 
 const mapImage = new Image();

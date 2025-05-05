@@ -1,5 +1,10 @@
 # zombieShooter
 
+---
+To get the game, download the repo as a zip file, extract it, open index.html by double clicking on it. The game should run properly after that, if it does not, make sure all of the files are in the same folder.
+
+
+
 A simple top-down shooter game where the player must survive waves of zombies.  
 The game features dynamic wave progression, map changes, and different zombie appearances based on the environment.
 
